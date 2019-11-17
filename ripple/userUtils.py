@@ -1,7 +1,10 @@
 import time
 import requests
 import json
-from _mysql import ProgrammingError
+try:
+    from pymysql.err import ProgrammingError
+except ImportError:
+    from MySQLdb._exceptions import ProgrammingError
 
 from common import generalUtils
 from common.constants import gameModes
@@ -86,12 +89,12 @@ def getUserStatsRx(userID, gameMode):
  
 		# Get stats
 		stats = glob.db.fetch("""SELECT
-								ranked_score_{gm} AS rankedScore,
-								avg_accuracy_{gm} AS accuracy,
-								playcount_{gm} AS playcount,
-								total_score_{gm} AS totalScore,
-								pp_{gm} AS pp
-								FROM rx_stats WHERE id = %s LIMIT 1""".format(gm=modeForDB), [userID])
+							ranked_score_{gm} AS rankedScore,
+							avg_accuracy_{gm} AS accuracy,
+							playcount_{gm} AS playcount,
+							total_score_{gm} AS totalScore,
+							pp_{gm} AS pp
+							FROM rx_stats WHERE id = %s LIMIT 1""".format(gm=modeForDB), [userID])
 
 	# Get game rank
 	stats["gameRank"] = getGameRankRx(userID, gameMode)
@@ -457,19 +460,6 @@ def updateAccuracyRX(userID, gameMode):
 	mode = scoreUtils.readableGameMode(gameMode)
 	glob.db.execute("UPDATE rx_stats SET avg_accuracy_{m} = %s WHERE id = %s LIMIT 1".format(m=mode),
 					[newAcc, userID])   
- 
-def updateAccuracyAP(userID, gameMode):
-	"""
-	Update accuracy value for userID relative to gameMode in DB
- 
-	:param userID: user id
-	:param gameMode: gameMode number
-	:return:
-	"""
-	newAcc = calculateAccuracyAP(userID, gameMode)
-	mode = scoreUtils.readableGameMode(gameMode)
-	glob.db.execute("UPDATE users_stats SET avg_accuracy_{m}_ap = %s WHERE id = %s LIMIT 1".format(m=mode),
-					[newAcc, userID])
 					
 def updatePP(userID, gameMode):
 	"""

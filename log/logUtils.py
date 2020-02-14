@@ -1,7 +1,6 @@
 from common.constants import bcolors
 from common import generalUtils
 from objects import glob
-from common.ripple import userUtils
 import time
 import os
 
@@ -92,7 +91,7 @@ def error(message, discord = None, alertDev = True):
 						Default: False
 	:return:
 	"""
-	logMessage(message, "ERROR", bcolors.RED, discord, alertDev)
+	logMessage(message, "ERROR", bcolors.RED, discord, alertDev, of = "errors.txt")
 
 def info(message, discord = None, alertDev = False):
 	"""
@@ -149,6 +148,7 @@ def rap(userID, message, discord=False, through=None):
 	if through is None: #Set default messager to bot account
 		through = glob.BOT_NAME
 
+	import common.ripple
 	glob.db.execute("INSERT INTO rap_logs (id, userid, text, datetime, through) VALUES (NULL, %s, %s, %s, %s)", [userID, message, int(time.time()), through])
-	username = userUtils.getUsername(userID)
-	logMessage("{} {}".format(username, message), discord=True)
+	username = common.ripple.userUtils.getUsername(userID)
+	logMessage("{} {}".format(username, message), discord=discord)

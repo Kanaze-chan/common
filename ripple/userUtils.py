@@ -6,8 +6,9 @@ try:
 except ImportError:
     from MySQLdb._exceptions import ProgrammingError
 
+import objects.beatmap
 from common import generalUtils
-from common.constants import gameModes
+from common.constants import gameModes, mods
 from common.constants import privileges
 from common.log import logUtils as log
 from common.ripple import passwordUtils, scoreUtils
@@ -16,11 +17,28 @@ from objects import glob
 
 def getBeatmapTime(beatmapID):
 	p = 0
-	r = requests.get("https://storage.bigtu.vip/api/b/{}".format(beatmapID)).text
+	r = requests.get("https://storage.ainu.pw/api/b/{}".format(beatmapID)).text
 	if r != "null\n":
 		p = json.loads(r)['TotalLength']
  
 	return p
+
+def PPBoard(userID, relax):
+	result = glob.db.fetch("SELECT ppboard FROM {rx}_stats WHERE id = {userid}".format(rx='rx' if relax else 'users', userid=userID))
+	return result['ppboard']
+
+def setPPBoard(userID, rx):
+	glob.db.execute("UPDATE {rx}_stats SET ppboard = 1 WHERE id = {userid}".format(rx='rx' if rx else 'users', userid=userID))
+
+def setScoreBoard(userID, rx):
+	glob.db.execute("UPDATE {rx}_stats SET ppboard = 0 WHERE id = {userid}".format(rx='rx' if rx else 'users', userid=userID))
+
+def noPPLimit(userID, relax):
+	result = glob.db.fetch("SELECT unrestricted_pp FROM {rx}_stats WHERE id = {userid}".format(rx='rx' if relax else 'users', userid=userID))
+	return result['unrestricted_pp']
+
+def whitelistUserPPLimit(userID, rx):
+	glob.db.execute("UPDATE {rx}_stats SET unrestricted_pp = 1 WHERE id = {userid}".format(rx='rx' if rx else 'users', userid=userID))
  
 def incrementPlaytime(userID, gameMode=0, length=0):
 	modeForDB = gameModes.getGameModeForDB(gameMode)
@@ -112,6 +130,20 @@ def getMaxCombo(userID, gameMode):
 	"""
 	# Get stats
 	maxcombo = glob.db.fetch("SELECT max_combo FROM scores WHERE userid = %s AND play_mode = %s ORDER BY max_combo DESC LIMIT 1", [userID, gameMode])
+ 
+	# Return stats + game rank
+	return maxcombo["max_combo"]
+
+def getMaxComboRX(userID, gameMode):
+	"""
+	Get all user stats relative to `gameMode`
+ 
+	:param userID:
+	:param gameMode: game mode number
+	:return: dictionary with result
+	"""
+	# Get stats
+	maxcombo = glob.db.fetch("SELECT max_combo FROM scores_relax WHERE userid = %s AND play_mode = %s ORDER BY max_combo DESC LIMIT 1", [userID, gameMode])
  
 	# Return stats + game rank
 	return maxcombo["max_combo"]
@@ -324,15 +356,11 @@ def calculateAccuracy(userID, gameMode):
 	:param gameMode: game mode number
 	:return: new accuracy
 	"""
-	# Select what to sort by
-	if gameMode == 0:
-		sortby = "pp"
-	else:
-		sortby = "accuracy"
 	# Get best accuracy scores
 	bestAccScores = glob.db.fetchAll(
-		"SELECT accuracy FROM scores WHERE userid = %s AND play_mode = %s AND completed = 3 ORDER BY " + sortby + " DESC LIMIT 500",
-		[userID, gameMode])
+		"SELECT accuracy FROM scores WHERE userid = %s AND play_mode = %s AND completed = 3 ORDER BY pp DESC LIMIT 500",
+		(userID, gameMode)
+	)
 
 	v = 0
 	if bestAccScores is not None:
@@ -360,14 +388,9 @@ def calculateAccuracyRX(userID, gameMode):
 	:param gameMode: game mode number
 	:return: new accuracy
 	"""
-	# Select what to sort by
-	if gameMode == 0:
-		sortby = "pp"
-	else:
-		sortby = "accuracy"
 	# Get best accuracy scores
 	bestAccScores = glob.db.fetchAll(
-		"SELECT accuracy FROM scores_relax WHERE userid = %s AND play_mode = %s AND completed = 3 ORDER BY " + sortby + " DESC LIMIT 500",
+		"SELECT accuracy FROM scores_relax WHERE userid = %s AND play_mode = %s AND completed = 3 ORDER BY pp DESC LIMIT 500",
 		[userID, gameMode])
  
 	v = 0
@@ -396,21 +419,12 @@ def calculatePP(userID, gameMode):
 	:param gameMode: game mode number
 	:return: total PP
 	"""
-	# Get best pp scores
-	bestPPScores = glob.db.fetchAll(
-		"SELECT pp FROM scores WHERE userid = %s AND play_mode = %s AND completed = 3 ORDER BY pp DESC LIMIT 500",
-		[userID, gameMode])
-
-	# Calculate weighted PP
-	totalPP = 0
-	if bestPPScores is not None:
-		k = 0
-		for i in bestPPScores:
-			new = round(round(i["pp"]) * 0.95 ** k)
-			totalPP += new
-			k += 1
-
-	return totalPP
+	return sum(round(round(row["pp"]) * 0.95 ** i) for i, row in enumerate(glob.db.fetchAll(
+		"SELECT pp FROM scores LEFT JOIN(beatmaps) USING(beatmap_md5) "
+		"WHERE userid = %s AND play_mode = %s AND completed = 3 AND ranked >= 2 "
+		"ORDER BY pp DESC LIMIT 500",
+		(userID, gameMode)
+	)))
 
 def calculatePPRelax(userID, gameMode):
 	"""
@@ -420,21 +434,13 @@ def calculatePPRelax(userID, gameMode):
 	:param gameMode: game mode number
 	:return: total PP
 	"""
-	# Get best pp scores
-	bestPPScores = glob.db.fetchAll(
-		"SELECT pp FROM scores_relax WHERE userid = %s AND play_mode = %s AND completed = 3 ORDER BY pp DESC LIMIT 500",
-		[userID, gameMode])
+	return sum(round(round(row["pp"]) * 0.95 ** i) for i, row in enumerate(glob.db.fetchAll(
+		"SELECT pp FROM scores_relax LEFT JOIN(beatmaps) USING(beatmap_md5) "
+		"WHERE userid = %s AND play_mode = %s AND completed = 3 AND ranked >= 2 "
+		"ORDER BY pp DESC LIMIT 500",
+		(userID, gameMode)
+	)))
 
-	# Calculate weighted PP
-	totalPP = 0
-	if bestPPScores is not None:
-		k = 0
-		for i in bestPPScores:
-			new = round(round(i["pp"]) * 0.95 ** k)
-			totalPP += new
-			k += 1
-
-	return totalPP
 def updateAccuracy(userID, gameMode):
 	"""
 	Update accuracy value for userID relative to gameMode in DB
@@ -468,15 +474,13 @@ def updatePP(userID, gameMode):
 	:param userID: user id
 	:param gameMode: game mode number
 	"""
-	# Make sure the user exists
-	# if not exists(userID):
-	#	return
-
-	# Get new total PP and update db
-	newPP = calculatePP(userID, gameMode)
-	mode = scoreUtils.readableGameMode(gameMode)
-	glob.db.execute("UPDATE users_stats SET pp_{}=%s WHERE id = %s LIMIT 1".format(mode), [newPP, userID])
-
+	glob.db.execute(
+		"UPDATE users_stats SET pp_{}=%s WHERE id = %s LIMIT 1".format(scoreUtils.readableGameMode(gameMode)),
+		(
+			calculatePP(userID, gameMode),
+			userID
+		)
+	)
 
 def updatePPRelax(userID, gameMode):
 	"""
@@ -485,22 +489,22 @@ def updatePPRelax(userID, gameMode):
 	:param userID: user id
 	:param gameMode: game mode number
 	"""
-	# Make sure the user exists
-	# if not exists(userID):
-	#	return
+	glob.db.execute(
+		"UPDATE rx_stats SET pp_{}=%s WHERE id = %s LIMIT 1".format(scoreUtils.readableGameMode(gameMode)),
+		(
+			calculatePPRelax(userID, gameMode),
+			userID
+		)
+	)
 
-	# Get new total PP and update db
-	newPP = calculatePPRelax(userID, gameMode)
-	mode = scoreUtils.readableGameMode(gameMode)
-	glob.db.execute("UPDATE rx_stats SET pp_{}=%s WHERE id = %s LIMIT 1".format(mode), [newPP, userID])
-
-def updateStats(userID, __score):
+def updateStats(userID, score_):
 	"""
 	Update stats (playcount, total score, ranked score, level bla bla)
 	with data relative to a score object
 
 	:param userID:
-	:param __score: score object
+	:param score_: score object
+	:param beatmap_: beatmap object. Optional. If not passed, it'll be determined by score_.
 	"""
 
 	# Make sure the user exists
@@ -509,36 +513,48 @@ def updateStats(userID, __score):
 		return
 
 	# Get gamemode for db
-	mode = scoreUtils.readableGameMode(__score.gameMode)
+	mode = scoreUtils.readableGameMode(score_.gameMode)
 
-	# Update total score and playcount
+	# Update total score, playcount and play time
+	if score_.playTime is not None:
+		realPlayTime = score_.playTime
+	else:
+		realPlayTime = score_.fullPlayTime
+
 	glob.db.execute(
-		"UPDATE users_stats SET total_score_{m}=total_score_{m}+%s, playcount_{m}=playcount_{m}+1 WHERE id = %s LIMIT 1".format(
-			m=mode), [__score.score, userID])
+		"UPDATE users_stats SET total_score_{m}=total_score_{m}+%s, playcount_{m}=playcount_{m}+1, "
+		"playtime_{m} = playtime_{m} + %s "
+		"WHERE id = %s LIMIT 1".format(
+			m=mode
+		),
+		(score_.score, realPlayTime, userID)
+	)
 
 	# Calculate new level and update it
-	updateLevel(userID, __score.gameMode)
+	updateLevel(userID, score_.gameMode)
 
 	# Update level, accuracy and ranked score only if we have passed the song
-	if __score.passed:
+	if score_.passed:
 		# Update ranked score
 		glob.db.execute(
 			"UPDATE users_stats SET ranked_score_{m}=ranked_score_{m}+%s WHERE id = %s LIMIT 1".format(m=mode),
-			[__score.rankedScoreIncrease, userID])
+			(score_.rankedScoreIncrease, userID)
+		)
 
 		# Update accuracy
-		updateAccuracy(userID, __score.gameMode)
+		updateAccuracy(userID, score_.gameMode)
 
 		# Update pp
-		updatePP(userID, __score.gameMode)
+		updatePP(userID, score_.gameMode)
 
-def updateStatsRx(userID, __score):
+def updateStatsRx(userID, score_):
 	"""
 	Update stats (playcount, total score, ranked score, level bla bla)
 	with data relative to a score object
 
 	:param userID:
-	:param __score: score object
+	:param score_: score object
+	:param beatmap_: beatmap object. Optional. If not passed, it'll be determined by score_.
 	"""
 
 	# Make sure the user exists
@@ -547,28 +563,53 @@ def updateStatsRx(userID, __score):
 		return
 
 	# Get gamemode for db
-	mode = scoreUtils.readableGameMode(__score.gameMode)
+	mode = scoreUtils.readableGameMode(score_.gameMode)
 
-	# Update total score and playcount
+	# Update total score, playcount and play time
+	if score_.playTime is not None:
+		realPlayTime = score_.playTime
+	else:
+		realPlayTime = score_.fullPlayTime
+
 	glob.db.execute(
-		"UPDATE rx_stats SET total_score_{m}=total_score_{m}+%s, playcount_{m}=playcount_{m}+1 WHERE id = %s LIMIT 1".format(
-			m=mode), [__score.score, userID])
+		"UPDATE rx_stats SET total_score_{m}=total_score_{m}+%s, playcount_{m}=playcount_{m}+1, "
+		"playtime_{m} = playtime_{m} + %s "
+		"WHERE id = %s LIMIT 1".format(
+            m=mode
+        ),
+        (score_.score, realPlayTime, userID)
+    )
 
 	# Calculate new level and update it
-	updateLevelRX(userID, __score.gameMode)
+	updateLevelRX(userID, score_.gameMode)
 
 	# Update level, accuracy and ranked score only if we have passed the song
-	if __score.passed:
+	if score_.passed:
 		# Update ranked score
 		glob.db.execute(
 			"UPDATE rx_stats SET ranked_score_{m}=ranked_score_{m}+%s WHERE id = %s LIMIT 1".format(m=mode),
-			[__score.rankedScoreIncrease, userID])
+			(score_.rankedScoreIncrease, userID)
+		)
 
 		# Update accuracy
-		updateAccuracyRX(userID, __score.gameMode)
+		updateAccuracyRX(userID, score_.gameMode)
 
 		# Update pp
-		updatePPRelax(userID, __score.gameMode)
+		updatePPRelax(userID, score_.gameMode)
+
+def incrementUserBeatmapPlaycount(userID, gameMode, beatmapID):
+	glob.db.execute(
+		"INSERT INTO users_beatmap_playcount (user_id, beatmap_id, game_mode, playcount) "
+		"VALUES (%s, %s, %s, 1) ON DUPLICATE KEY UPDATE playcount = playcount + 1",
+		(userID, beatmapID, gameMode)
+	)
+	
+def incrementUserBeatmapPlaycountRX(userID, gameMode, beatmapID):
+	glob.db.execute(
+		"INSERT INTO rx_beatmap_playcount (user_id, beatmap_id, game_mode, playcount) "
+		"VALUES (%s, %s, %s, 1) ON DUPLICATE KEY UPDATE playcount = playcount + 1",
+		(userID, beatmapID, gameMode)
+	)
 
 def updateLatestActivity(userID):
 	"""
@@ -621,6 +662,19 @@ def incrementReplaysWatched(userID, gameMode):
 	mode = scoreUtils.readableGameMode(gameMode)
 	glob.db.execute(
 		"UPDATE users_stats SET replays_watched_{mode}=replays_watched_{mode}+1 WHERE id = %s LIMIT 1".format(
+			mode=mode), [userID])
+
+def incrementReplaysWatchedRX(userID, gameMode):
+	"""
+	Increment userID's replays watched by others relative to gameMode
+
+	:param userID: user id
+	:param gameMode: game mode number
+	:return:
+	"""
+	mode = scoreUtils.readableGameMode(gameMode)
+	glob.db.execute(
+		"UPDATE rx_stats SET replays_watched_{mode}=replays_watched_{mode}+1 WHERE id = %s LIMIT 1".format(
 			mode=mode), [userID])
 
 def getAqn(userID):
@@ -1378,8 +1432,10 @@ def removeFromLeaderboard(userID):
 	country = getCountry(userID).lower()
 	for mode in ["std", "taiko", "ctb", "mania"]:
 		glob.redis.zrem("ripple:leaderboard:{}".format(mode), str(userID))
+		glob.redis.zrem("ripple:leaderboard_relax:{}".format(mode), str(userID))
 		if country is not None and len(country) > 0 and country != "xx":
 			glob.redis.zrem("ripple:leaderboard:{}:{}".format(mode, country), str(userID))
+			glob.redis.zrem("ripple:leaderboard_relax:{}:{}".format(mode, country), str(userID))
 
 def deprecateTelegram2Fa(userID):
 	"""
@@ -1429,3 +1485,31 @@ def getClan(userID):
 	if clanInfo is None:
 		return username
 	return "[" + clanInfo["tag"] + "] " + username
+
+def updateTotalHits(userID=0, gameMode=gameModes.STD, newHits=0, score=None):
+	if score is None and userID == 0:
+		raise ValueError("Either score or userID must be provided")
+	if score is not None:
+		newHits = score.c50 + score.c100 + score.c300
+		gameMode = score.gameMode
+		userID = score.playerUserID
+	glob.db.execute(
+		"UPDATE users_stats SET total_hits_{gm} = total_hits_{gm} + %s WHERE id = %s LIMIT 1".format(
+			gm=gameModes.getGameModeForDB(gameMode)
+		),
+		(newHits, userID)
+	)
+
+def updateTotalHitsRX(userID=0, gameMode=gameModes.STD, newHits=0, score=None):
+	if score is None and userID == 0:
+		raise ValueError("Either score or userID must be provided")
+	if score is not None:
+		newHits = score.c50 + score.c100 + score.c300
+		gameMode = score.gameMode
+		userID = score.playerUserID
+	glob.db.execute(
+		"UPDATE rx_stats SET total_hits_{gm} = total_hits_{gm} + %s WHERE id = %s LIMIT 1".format(
+			gm=gameModes.getGameModeForDB(gameMode)
+		),
+		(newHits, userID)
+	)
